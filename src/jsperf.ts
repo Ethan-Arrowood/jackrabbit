@@ -27,7 +27,7 @@ export class JSPerf <Context> {
 
         this.results = new Map()
 
-        process.nextTick(() => {
+        queueMicrotask(() => {
             this.executeHandlers(this.handlers.beforeAll)
             Promise.all(
                 [...this.runs.entries()].map(([key, func]) => {
