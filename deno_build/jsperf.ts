@@ -1,4 +1,4 @@
-import { FunctionWithContext } from "./utils"
+import { FunctionWithContext } from "./utils.ts"
 
 type HandlerList <Context> = FunctionWithContext<Context>[]
 interface Handlers <Context> {
