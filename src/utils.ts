@@ -13,4 +13,4 @@ export interface Configuration <Context> {
 }
 
 export type BeforeAll<Context> = () => Context
-export type FunctionWithContext <Context> = (context: Context) => void | Promise<void>
+export type FunctionWithContext <Context> = (context: Context, ...extraArgs: any[]) => void | Promise<void>
