@@ -1,6 +1,9 @@
-import { FunctionWithContext } from "./utils"
+import { FunctionWithContext, __dirname, JSONStringify, JSONParse } from "./utils.js";
+import path from "path";
+import { Worker } from "worker_threads";
 
 type HandlerList <Context> = FunctionWithContext<Context>[]
+
 interface Handlers <Context> {
     beforeAll: HandlerList<Context>
     beforeEach:  HandlerList<Context>
@@ -27,55 +30,86 @@ export class JSPerf <Context> {
 
         this.results = new Map()
 
-        process.nextTick(() => {
-            this.executeHandlers(this.handlers.beforeAll)
-            Promise.all(
-                [...this.runs.entries()].map(([key, func]) => {
-                    this.executeHandlers(this.handlers.beforeEach)
-                    performance.mark(`${key}-start`)
-                    func(this.context)
-                    performance.mark(`${key}-end`)
-                    this.executeHandlers(this.handlers.afterEach)
-                    performance.measure(
-                        `${key}-measure`,
-                        `${key}-start`,
-                        `${key}-end`
-                    )
-                    this.results.set(key, performance.getEntriesByName(`${key}-measure`)[0])
-                })
-            ).then(() => {
-                this.executeHandlers(this.handlers.afterAll)
-            }).then(() => {
-                console.table([...this.results.entries()].map(([key, performanceEntry]) => {
-                    return {
-                        Run: key,
-                        'Time (ms)': performanceEntry.duration
-                    }
-                }))
+        queueMicrotask(() => {
+            this.executeRuns()
+        })
+    }
+
+    async executeRuns () {
+        await this.executeHandlers(this.handlers.beforeAll)
+
+        const runs = this.buildRuns()
+
+        await Promise.all(runs)
+
+        await this.executeHandlers(this.handlers.afterAll)
+
+        console.log(this.results)
+        console.table(Array.from(this.results).map(([key, performanceEntry]) => {
+            return {
+                Run: key,
+                'Time (ms)': performanceEntry.duration
+            }
+        }))
+    }
+
+    beforeAll (func: FunctionWithContext<Context>) {
+        this.handlers.beforeAll.push(func)
+    }
+
+    beforeEach (func: FunctionWithContext<Context>) {
+        this.handlers.beforeEach.push(func)
+    }
+
+    afterEach (func: FunctionWithContext<Context>) {
+        this.handlers.afterEach.push(func)
+    }
+
+    afterAll (func: FunctionWithContext<Context>) {
+        this.handlers.afterAll.push(func)
+    }
+
+    private executeHandlers (handlers: HandlerList<Context>, data?: unknown) {
+        return Promise.all(handlers.map(handler => handler(this.context, data)))
+    }
+
+    private buildRuns () {
+        return Array.from(this.runs).map(async run => {
+            await this.executeHandlers(this.handlers.beforeEach);
+
+            const workerResultRaw = await this.executeRun(run) as {
+                id: string,
+                result: unknown,
+                measure: PerformanceEntry
+            };
+
+            const workerResult = JSONParse(workerResultRaw)
+
+            await this.executeHandlers(this.handlers.afterEach, workerResult.result);
+
+            this.results.set(workerResult.id, workerResult.measure)
+        });
+    }
+
+    private executeRun ([id, func]: [id: string, func: FunctionWithContext<Context>]) {
+        return new Promise((resolve, reject) => {
+            const worker = new Worker(path.join(__dirname, './worker.js'), {
+                workerData: {
+                    id,
+                    func: func.toString(),
+                    context: JSONStringify(this.context)
+                }
+            })
+            worker.on('message', resolve);
+            worker.on('error', reject);
+            worker.on('exit', code => {
+                if (code !== 0)
+                    reject(new Error(`Worker stopped with exit code ${code}`));
             })
         })
     }
 
-    beforeAll (func:  FunctionWithContext<Context>) {
-        this.handlers.beforeAll.push(func)
-    }
-    beforeEach (func: FunctionWithContext<Context>) {
-        this.handlers.beforeEach.push(func)
-    }
-    afterEach (func:  FunctionWithContext<Context>) {
-        this.handlers.afterEach.push(func)
-    }
-    afterAll (func:  FunctionWithContext<Context>) {
-        this.handlers.afterAll.push(func)
-    }
-
-    private executeHandlers (handlers: HandlerList<Context>) {
-        for (const handler of handlers) {
-            handler(this.context)
-        }
-    }
-
-    run (id: string, func:  FunctionWithContext<Context>) {
+    run (id: string, func: FunctionWithContext<Context>) {
         if (this.runs.has(id)) {
             throw new Error(`Run with id ${id} already exists.`)
         }

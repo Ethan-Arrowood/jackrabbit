@@ -2,10 +2,10 @@
   "name": "jackrabbit",
   "version": "0.0.1",
   "description": "",
-  "main": "index.js",
+  "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node benchmark/for.benchmark.js"
+    "test": "npm run build && node benchmark/async.benchmark.js"
   },
   "keywords": [],
   "author": "Ethan Arrowood <ethan@arrowood.dev>",
