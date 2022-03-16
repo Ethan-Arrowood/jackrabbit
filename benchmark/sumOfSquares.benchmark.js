@@ -1,6 +1,6 @@
 'use strict';
-const assert = require("assert")
-const jsperf = require("../build").default
+import assert from "assert";
+import jsperf from "../build/index.js";
 
 const createArray = (length) => Array.from({ length }, (_, i) => i)
 

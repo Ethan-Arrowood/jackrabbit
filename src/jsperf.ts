@@ -1,6 +1,6 @@
-import { FunctionWithContext } from "./utils";
-import async_hooks, { AsyncResource } from "async_hooks";
-import { performance, PerformanceObserver } from "perf_hooks";
+import { FunctionWithContext, __dirname, JSONStringify, JSONParse } from "./utils.js";
+import path from "path";
+import { Worker } from "worker_threads";
 
 type HandlerList <Context> = FunctionWithContext<Context>[]
 
@@ -11,25 +11,11 @@ interface Handlers <Context> {
     afterAll:  HandlerList<Context>
 }
 
-class Run <Context> extends AsyncResource {
-    func: FunctionWithContext<Context>;
-    constructor (func: FunctionWithContext<Context>) {
-        super('Run');
-        this.func = func;
-    }
-    execute () {
-        this.runInAsyncScope(this.func, null)
-    }
-}
-
 export class JSPerf <Context> {
     private context: Context
     private runs: Map<string, FunctionWithContext<Context>>
     private handlers: Handlers<Context>
     private results: Map<string, PerformanceEntry>
-    private asyncHookSet: Set<number>;
-    private hook: async_hooks.AsyncHook;
-    obs: PerformanceObserver;
 
     constructor () {
         this.context = {} as Context
@@ -45,37 +31,11 @@ export class JSPerf <Context> {
         this.results = new Map()
 
         queueMicrotask(() => {
-            this.execute()
+            this.executeRuns()
         })
-
-        this.asyncHookSet = new Set();
-        this.hook = async_hooks.createHook({
-            init: (id, type) => {
-                console.log(id, type);
-                performance.mark(`${id}-Init`)
-                this.asyncHookSet.add(id);
-            },
-            destroy: (id) => {
-                if (this.asyncHookSet.has(id)) {
-                    this.asyncHookSet.delete(id);
-                    performance.mark(`${id}-Destroy`)
-                    performance.measure(`${id}`, `${id}-Init`, `${id}-Destroy`)
-                }
-            }
-        });
-        this.hook.enable();
-
-        this.obs = new PerformanceObserver((list, observer) => {
-            console.log(list.getEntries())
-            performance.clearMarks();
-            // @ts-ignore
-            performance.clearMeasures();
-            observer.disconnect()
-        });
-        this.obs.observe({ entryTypes: ['measure'], buffered: true })
     }
 
-    async execute () {
+    async executeRuns () {
         await this.executeHandlers(this.handlers.beforeAll)
 
         const runs = this.buildRuns()
@@ -85,7 +45,7 @@ export class JSPerf <Context> {
         await this.executeHandlers(this.handlers.afterAll)
 
         console.log(this.results)
-        console.table([...this.results.entries()].map(([key, performanceEntry]) => {
+        console.table(Array.from(this.results).map(([key, performanceEntry]) => {
             return {
                 Run: key,
                 'Time (ms)': performanceEntry.duration
@@ -114,12 +74,38 @@ export class JSPerf <Context> {
     }
 
     private buildRuns () {
-        return Array.from(this.runs).map(async ([key, func]) => {
-            await this.executeHandlers(this.handlers.beforeEach)
+        return Array.from(this.runs).map(async run => {
+            await this.executeHandlers(this.handlers.beforeEach);
 
-            const runResult = await func(this.context)
+            const workerResultRaw = await this.executeRun(run) as {
+                id: string,
+                result: unknown,
+                measure: PerformanceEntry
+            };
 
-            await this.executeHandlers(this.handlers.afterEach, runResult)
+            const workerResult = JSONParse(workerResultRaw)
+
+            await this.executeHandlers(this.handlers.afterEach, workerResult.result);
+
+            this.results.set(workerResult.id, workerResult.measure)
+        });
+    }
+
+    private executeRun ([id, func]: [id: string, func: FunctionWithContext<Context>]) {
+        return new Promise((resolve, reject) => {
+            const worker = new Worker(path.join(__dirname, './worker.js'), {
+                workerData: {
+                    id,
+                    func: func.toString(),
+                    context: JSONStringify(this.context)
+                }
+            })
+            worker.on('message', resolve);
+            worker.on('error', reject);
+            worker.on('exit', code => {
+                if (code !== 0)
+                    reject(new Error(`Worker stopped with exit code ${code}`));
+            })
         })
     }
 
