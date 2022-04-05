@@ -1,3 +1,5 @@
+# ⚠️ This repo has been archived in favor of: https://github.com/jsperfdev/jsperf.dev ⚠️
+
 # jackrabbit
 
 Idea 💡: 
